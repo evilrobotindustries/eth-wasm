@@ -1,4 +1,4 @@
-use primitive_types::U128;
+use primitive_types::{H160, U128};
 pub use primitive_types::U256;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -7,6 +7,14 @@ use serde_json::Value;
 use std::fmt::Display;
 use std::str::FromStr;
 use wasm_bindgen::prelude::*;
+
+pub type Address = H160;
+fn address_from_string(input: &str) -> Address {
+    Address::from_str(input).expect("could not address from string")
+}
+fn address_to_string(address: &Address) -> String {
+    format!("{:#x}", address)
+}
 
 #[wasm_bindgen]
 extern "C" {
@@ -62,19 +70,24 @@ impl Provider {
         }
     }
 
-    pub async fn request_accounts(&self) -> Result<Vec<String>, Error> {
-        Ok(self
+    pub async fn request_accounts(&self) -> Result<Vec<Address>, Error> {
+        let accounts = self
             .request::<Vec<String>>("eth_requestAccounts", vec![])
-            .await?)
+            .await?;
+        Ok(accounts.iter().map(|a| address_from_string(a)).collect())
     }
 
-    pub async fn balance(&self, address: &str) -> Result<f64, Error> {
-        let address = serde_json::to_value(address).unwrap();
+    pub async fn balance(&self, address: Address) -> Result<f64, Error> {
+        let a = address_to_string(&address);
+        log(a);
+
+        let address = serde_json::to_value(address_to_string(&address)).unwrap();
         let block = serde_json::to_value("latest").unwrap();
 
         const CONVERSION_UNIT: f64 = 1_000_000_000_000_000_000.0;
 
         let balance: U256 = self.request("eth_getBalance", vec![address, block]).await?;
+        log("balance received".to_string());
         let balance = balance.as_u128() as f64;
         Ok(balance / CONVERSION_UNIT)
     }
@@ -103,12 +116,13 @@ impl Provider {
 
     pub fn on_accounts_changed<F: 'static>(&self, f: F)
         where
-            F: Fn(Vec<String>),
+            F: Fn(Vec<Address>),
     {
         let handler = Closure::wrap(Box::new(move |accounts: JsValue| {
             let accounts: Vec<String> = accounts
                 .into_serde()
                 .expect("could not deserialise acounts as String[]");
+            let accounts = accounts.iter().map(|a| address_from_string(a)).collect();
             f(accounts);
         }) as Box<dyn Fn(JsValue)>);
         self.0.on("accountsChanged", &handler);
